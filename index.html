@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Theo dõi ngón tay với STL & Texture - Three.js</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <h1>Theo dõi ngón trỏ với mô hình 3D</h1>
+    <p>Kéo và thả một file ảnh (.jpg, .png) vào vùng webcam/canvas để làm hoa văn cho vật thể 3D.</p>
+    
+    <div class="container" id="drop-area">
+        <video id="webcam" class="input_video" autoplay playsinline></video>
+        <canvas id="output_canvas" class="output_canvas"></canvas>
+        <div id="drop-message">Thả ảnh vào đây</div>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <input type="file" id="file-input" accept="image/*" style="display: none;">
+        <button onclick="document.getElementById('file-input').click()" style="padding: 10px 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; margin-right: 10px;">
+            Chọn ảnh từ máy tính
+        </button>
+        <button onclick="changeUVMapping()" style="padding: 10px 20px; font-size: 16px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; margin-right: 10px;">
+            Thay đổi UV Mapping
+        </button>
+        <button onclick="resetTexture()" style="padding: 10px 20px; font-size: 16px; background: #dc3545; color: white; border: none; border-radius: 5px; cursor: pointer;">
+            Reset Texture
+        </button>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-color: #f0f0f0;
+    margin: 0;
+    padding: 20px;
+}
+
+h1 {
+    color: #333;
+}
+
+.container {
+    position: relative;
+    width: 640px;
+    height: 480px;
+    margin-top: 20px;
+    border: 2px solid #333;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.input_video, .output_canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+/* Canvas 3D sẽ được tạo động bởi JavaScript */
+canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+/* Lật video để tạo hiệu ứng "gương" */
+.input_video {
+    transform: scaleX(-1);
+}
+
+#drop-area {
+    position: relative; /* Đảm bảo con bên trong định vị tương đối với nó */
+}
+
+#drop-message {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 15px 30px;
+    border-radius: 8px;
+    font-size: 1.2em;
+    pointer-events: none; /* Cho phép các sự kiện chuột xuyên qua nó */
+    opacity: 0; /* Mặc định ẩn */
+    transition: opacity 0.3s ease-in-out;
+    z-index: 10; /* Đảm bảo nó nằm trên canvas/video */
+}
+
+.highlight #drop-message {
+    opacity: 1; /* Hiển thị khi kéo file vào */
+}
+
+.highlight {
+    border: 2px dashed #007bff; /* Thay đổi viền khi kéo file vào */
+}
