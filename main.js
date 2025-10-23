@@ -9,13 +9,13 @@ const dropMessage = document.getElementById('drop-message');
 let scene, camera, renderer, stlObject;
 let currentMaterial; // Để lưu trữ material hiện tại của stlObject
 let lastPosition = new THREE.Vector3(); // Để làm mượt chuyển động
-let smoothingFactor = 0.1; // Hệ số làm mượt (0-1, càng nhỏ càng mượt)
+let smoothingFactor = 0.98; // Hệ số làm mượt (0-1, càng nhỏ càng mượt)
 let fingerCircle; // Vòng tròn tại đầu ngón tay
 let currentUVMapping = 'spherical'; // Loại UV mapping hiện tại
-
+let rotationOffset = new THREE.Quaternion(); // <-- THÊM MỚI: Quaternion lưu góc xoay bù trừ thủ công
 // Tạo canvas riêng cho Three.js
 const threeCanvas = document.createElement('canvas');
-threeCanvas.width = 640;
+threeCanvas.width = 480;
 threeCanvas.height = 480;
 threeCanvas.style.position = 'absolute';
 threeCanvas.style.top = '0';
@@ -27,7 +27,7 @@ document.getElementById('drop-area').appendChild(threeCanvas);
 scene = new THREE.Scene();
 
 // 2. Khởi tạo Camera (Góc nhìn)
-camera = new THREE.PerspectiveCamera(75, threeCanvas.width / threeCanvas.height, 0.1, 1000);
+camera = new THREE.PerspectiveCamera(70, 480/480, 0.1, 1000);
 camera.position.z = 1.5; // Đặt camera lùi lại một chút
 
 // 3. Khởi tạo Renderer (Công cụ kết xuất)
@@ -39,9 +39,10 @@ renderer.setSize(threeCanvas.width, threeCanvas.height);
 renderer.setClearColor(0x000000, 0); // Nền trong suốt
 
 // 4. Thêm ánh sáng
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); // Tăng cường độ ambient light
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
 scene.add(ambientLight);
-const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // Tăng cường độ directional light
+// Tăng cường độ directional light để có tương phản rõ ràng hơn
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5); // <-- ĐÃ TĂNG CƯỜNG ĐỘ
 directionalLight.position.set(0, 1, 1);
 scene.add(directionalLight);
 
@@ -51,78 +52,72 @@ directionalLight2.position.set(-1, 0, 1);
 scene.add(directionalLight2);
 
 // 5. Tải file STL
-const loader = new THREE.STLLoader();
-loader.load('HoaVan.STL', (geometry) => { // <-- THAY TÊN FILE CỦA BẠN VÀO ĐÂY
-    currentMaterial = new THREE.MeshStandardMaterial({
-        color: 0x00ff00, // Màu xanh lá mặc định
-        metalness: 0.1,
-        roughness: 0.9,
-        side: THREE.DoubleSide // Hiển thị cả hai mặt
-    });
-    stlObject = new THREE.Mesh(geometry, currentMaterial);
-
-    // Tính toán hộp giới hạn để tìm tâm
-    geometry.computeBoundingBox();
-    const center = new THREE.Vector3();
-    geometry.boundingBox.getCenter(center);
-    // Di chuyển hình học để tâm của nó nằm ở gốc tọa độ (0,0,0)
-    geometry.center();
-    
-    // Tạo UV mapping cho STL (quan trọng!)
-    geometry.computeBoundingBox();
-    const size = new THREE.Vector3();
-    geometry.boundingBox.getSize(size);
-    
-    const uvAttribute = geometry.attributes.uv;
-    if (!uvAttribute) {
-        // Tạo UV coordinates dựa trên vị trí vertices với nhiều phương pháp
-        const uvArray = new Float32Array(geometry.attributes.position.count * 2);
-        const positions = geometry.attributes.position.array;
-        
-        for (let i = 0; i < positions.length; i += 3) {
-            const x = positions[i];
-            const y = positions[i + 1];
-            const z = positions[i + 2];
-            
-            // Sử dụng spherical mapping để texture hiển thị tốt hơn
-            const radius = Math.sqrt(x*x + y*y + z*z);
-            if (radius > 0) {
-                // Spherical coordinates
-                const u = 0.5 + Math.atan2(z, x) / (2 * Math.PI);
-                const v = 0.5 - Math.asin(y / radius) / Math.PI;
-                
-                uvArray[(i / 3) * 2] = u;
-                uvArray[(i / 3) * 2 + 1] = v;
-            } else {
-                // Fallback cho trường hợp radius = 0
-                uvArray[(i / 3) * 2] = 0.5;
-                uvArray[(i / 3) * 2 + 1] = 0.5;
-            }
-        }
-        
-        geometry.setAttribute('uv', new THREE.BufferAttribute(uvArray, 2));
-        console.log('Spherical UV mapping created for STL');
-    }
-
-    // Điều chỉnh kích thước và vị trí ban đầu
-    stlObject.scale.set(0.012, 0.012, 0.012); // Tăng kích thước gấp 4 lần (0.003 * 4 = 0.012)
-    stlObject.rotation.x = -Math.PI / 2; // Xoay cho phù hợp với hướng ngón tay
-
-    scene.add(stlObject);
-    
-    // Tạo vòng tròn tại đầu ngón tay
-    createFingerCircle();
-    
-    // Test texture đơn giản
-    testTexture();
-    
-    console.log('STL file loaded successfully');
-}, undefined, (error) => {
-    console.error('Error loading STL file:', error);
-    alert('Không thể tải file STL. Vui lòng kiểm tra đường dẫn file.');
-});
+// Phần code load STL cũ đã bị comment
 
 // --- CÀI ĐẶT MEDIAPIPE HANDS ---
+
+function loadGLBModel(modelPath = 'HoaVan.glb') {
+    // 1. Loại bỏ mô hình STL cũ nếu có
+    if (stlObject) {
+        scene.remove(stlObject);
+    }
+    
+    // 2. Khởi tạo GLTFLoader
+    const loader = new THREE.GLTFLoader();
+
+    loader.load(
+        modelPath,
+        (gltf) => {
+            // GLB có thể chứa nhiều đối tượng, ta lấy scene gốc
+            stlObject = gltf.scene; 
+            
+            // 3. Xử lý mô hình
+            
+            // Xử lý tâm đối tượng (Geometry Center)
+            // Lặp qua tất cả các mesh con và dịch chuyển
+            stlObject.traverse((child) => {
+                if (child.isMesh) {
+                    // Cần tính toán Bounding Box để tìm tâm
+                    child.geometry.computeBoundingBox();
+                    const center = new THREE.Vector3();
+                    child.geometry.boundingBox.getCenter(center);
+                    // Dịch chuyển hình học để tâm là (0,0,0)
+                    child.geometry.translate(-center.x, -center.y, -center.z);
+
+                    // SỬ DỤNG MESH STANDARD MATERIAL ĐỂ CÓ BÓNG VÀ TƯƠNG PHẢN
+                    child.material = new THREE.MeshStandardMaterial({ 
+                        color: 0xcccccc, 
+                        side: THREE.DoubleSide,
+                        metalness: 0.2, // Hiệu ứng kim loại nhẹ
+                        roughness: 0.8  // Độ nhám cao
+                    });
+                    currentMaterial = child.material;
+                }
+            });
+                
+            // 4. Thiết lập tỷ lệ và thêm vào Scene
+            // GIẢM KÍCH THƯỚC ĐỂ VẬT THỂ NHỎ HƠN
+            stlObject.scale.set(0.01, 0.01, 0.01); // <-- ĐÃ GIẢM TỪ 0.1 XUỐNG 0.02
+            const initialEuler = new THREE.Euler(1.742, 1.271, 1.571, 'XYZ');
+            rotationOffset.setFromEuler(initialEuler);
+            scene.add(stlObject);
+            console.log('Mô hình GLB đã được tải thành công!');
+        },
+        (xhr) => {
+            // Log tiến trình (tùy chọn)
+            console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+        },
+        (error) => {
+            console.error('Lỗi khi tải mô hình GLB:', error);
+            alert('Lỗi khi tải mô hình GLB.');
+        }
+    );
+}
+
+// 5. Cập nhật tên hàm gọi
+loadGLBModel('HoaVan.glb'); 
+// Đảm bảo bạn gọi hàm này thay vì loadSTLModel
+
 const hands = new Hands({
     locateFile: (file) => {
         return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
@@ -144,7 +139,7 @@ const webcam = new Camera(videoElement, {
     onFrame: async () => {
         await hands.send({ image: videoElement });
     },
-    width: 640,
+    width: 480,
     height: 480
 });
 webcam.start();
@@ -152,6 +147,7 @@ webcam.start();
 // Hàm tạo vòng tròn tại đầu ngón tay
 function createFingerCircle() {
     const circleGeometry = new THREE.RingGeometry(0.02, 0.03, 32);
+    // Vòng tròn này vẫn dùng MeshBasicMaterial vì nó là UI và không cần tương tác ánh sáng
     const circleMaterial = new THREE.MeshBasicMaterial({ 
         color: 0xff0000, // Màu đỏ
         transparent: true,
@@ -189,28 +185,34 @@ function testTexture() {
     // Áp dụng texture test
     setTimeout(() => {
         if (stlObject) {
-            const testMaterial = new THREE.MeshBasicMaterial({
+            // SỬ DỤNG MESH STANDARD MATERIAL CHO TEXTURE TEST
+            const testMaterial = new THREE.MeshStandardMaterial({
                 map: testTexture,
                 color: 0xffffff,
-                side: THREE.DoubleSide
+                side: THREE.DoubleSide,
+                metalness: 0.1,
+                roughness: 0.8
             });
             stlObject.material = testMaterial;
             currentMaterial = testMaterial;
-            console.log('Test texture applied with MeshBasicMaterial');
+            console.log('Test texture applied with MeshStandardMaterial');
         }
     }, 1000); // Đợi 1 giây để đảm bảo STL đã load xong
 }
 
-// Hàm thay đổi UV mapping
+// Hàm thay đổi UV mapping (giữ nguyên logic, chỉ thay đổi tên biến)
 function changeUVMapping() {
     if (!stlObject) {
-        alert('Mô hình STL chưa được tải!');
+        alert('Mô hình chưa được tải!');
         return;
     }
     
-    const geometry = stlObject.geometry;
+    // ... (logic UV mapping không đổi)
+    const geometry = stlObject.children[0].geometry; // GLB thường có children
     const positions = geometry.attributes.position.array;
     const uvArray = new Float32Array(positions.length / 3 * 2);
+
+    // Lưu ý: Phần này chỉ áp dụng cho STL/Geometry đơn giản. GLB thường đã có UV sẵn.
     
     // Thay đổi loại UV mapping
     if (currentUVMapping === 'spherical') {
@@ -218,6 +220,7 @@ function changeUVMapping() {
         console.log('Switching to planar UV mapping');
         
         // Planar mapping (phẳng)
+        geometry.computeBoundingBox();
         for (let i = 0; i < positions.length; i += 3) {
             const x = positions[i];
             const y = positions[i + 1];
@@ -235,6 +238,7 @@ function changeUVMapping() {
         console.log('Switching to cylindrical UV mapping');
         
         // Cylindrical mapping (hình trụ)
+        geometry.computeBoundingBox();
         for (let i = 0; i < positions.length; i += 3) {
             const x = positions[i];
             const y = positions[i + 1];
@@ -286,16 +290,23 @@ function changeUVMapping() {
 // Hàm reset texture về màu gốc
 function resetTexture() {
     if (!stlObject) {
-        alert('Mô hình STL chưa được tải!');
+        alert('Mô hình chưa được tải!');
         return;
     }
     
-    const defaultMaterial = new THREE.MeshBasicMaterial({
+    // SỬ DỤNG MESH STANDARD MATERIAL ĐỂ RESET
+    const defaultMaterial = new THREE.MeshStandardMaterial({
         color: 0x00ff00, // Màu xanh lá mặc định
-        side: THREE.DoubleSide
+        side: THREE.DoubleSide,
+        metalness: 0.1,
+        roughness: 0.9
     });
     
-    stlObject.material = defaultMaterial;
+    stlObject.traverse((child) => {
+        if (child.isMesh) {
+            child.material = defaultMaterial;
+        }
+    });
     currentMaterial = defaultMaterial;
     
     console.log('Texture reset to default color');
@@ -334,12 +345,12 @@ function onResults(results) {
         canvasCtx.arc(
             indexFingerTIP.x * canvasElement.width, 
             indexFingerTIP.y * canvasElement.height, 
-            15, // Bán kính vòng tròn
+            5, // Bán kính vòng tròn
             0, 
-            2 * Math.PI
+            2* Math.PI
         );
         canvasCtx.strokeStyle = '#ff0000';
-        canvasCtx.lineWidth = 3;
+        canvasCtx.lineWidth = 2;
         canvasCtx.stroke();
         canvasCtx.fillStyle = 'rgba(255, 0, 0, 0.3)';
         canvasCtx.fill();
@@ -351,44 +362,54 @@ function onResults(results) {
             // 1. Cập nhật vị trí - dính vào đỉnh ngón tay
             // Tọa độ từ MediaPipe là (0, 1), cần chuyển đổi sang không gian 3D của Three.js
             const targetPosition = new THREE.Vector3(
-                (indexFingerTIP.x - 0.5) * 2, // Chuyển x về (-1, 1)
+                -(indexFingerTIP.x - 0.5) * 2, // Chuyển x về (-1, 1)
                 -(indexFingerTIP.y - 0.5) * 2, // Chuyển y về (-1, 1) và đảo ngược
                 (indexFingerTIP.z) * 2 + 0.2 // Tăng offset để vật thể không bị che khuất
             );
             
-            // Làm mượt chuyển động bằng cách interpolate
+            // LÀM MƯỢT VÀ ÁP DỤNG VỊ TRÍ (BỎ COMMENT DÒNG NÀY)
             stlObject.position.lerp(targetPosition, smoothingFactor);
 
-            // 2. Cập nhật hướng - làm cho mô hình song song với ngón tay
-            // Tạo vector chỉ hướng từ khớp PIP đến đỉnh ngón tay (chính xác hơn)
-            const direction = new THREE.Vector3();
+            // 2. CẬP NHẬT HƯỚNG VÀ XOAY (LOGIC QUATERNION ĐỂ TRÁNH GIMBAL LOCK)
+            
+            // TÍNH TOÁN DIRECTION: Vector hướng từ khớp PIP (6) đến TIP (8)
+            const direction = new THREE.Vector3(); // <--- ĐÃ KHAI BÁO VÀ ĐỊNH NGHĨA
             direction.set(
                 indexFingerTIP.x - indexFingerPIP.x,
                 indexFingerTIP.y - indexFingerPIP.y,
                 indexFingerTIP.z - indexFingerPIP.z
             ).normalize();
-
-            // Sử dụng ma trận lookAt để xoay đối tượng theo hướng ngón tay
-            const lookAtTarget = new THREE.Vector3().addVectors(stlObject.position, direction);
-            stlObject.lookAt(lookAtTarget);
             
-            // Điều chỉnh xoay để mô hình hiển thị đúng hướng và dính chặt vào ngón tay
-            stlObject.rotateX(-Math.PI / 2);
-            stlObject.rotateZ(Math.PI / 6); // Xoay để mô hình hiển thị đẹp hơn
+            // a. Tính toán Quaternion mục tiêu dựa trên hướng
+            const targetQuaternion = new THREE.Quaternion();
+            const upVector = new THREE.Vector3(0, 1, 0); // Trục Up thế giới
+            const tempMatrix = new THREE.Matrix4();
+            
+            // Hàm lookAt tạo ma trận xoay để trục -Z của vật thể hướng theo 'direction'
+            tempMatrix.lookAt(direction, new THREE.Vector3(0, 0, 0), upVector); 
+            targetQuaternion.setFromRotationMatrix(tempMatrix);
+            
+            // b. Áp dụng góc xoay bù trừ thủ công (rotationOffset)
+            // Nhân Quaternion để áp dụng góc xoay thủ công lên trên phép xoay lookAt
+            targetQuaternion.multiply(rotationOffset);
+
+            // c. Làm mượt Quaternion và áp dụng lên mô hình
+            // Sử dụng slerp (làm mượt xoay)
+            stlObject.quaternion.slerp(targetQuaternion, smoothingFactor);
             
             // Lưu vị trí hiện tại để làm mượt lần sau
             lastPosition.copy(stlObject.position);
         }
 
         // Cập nhật vị trí vòng tròn 3D (nếu có)
-        if (fingerCircle) {
-            const circlePosition = new THREE.Vector3(
-                (indexFingerTIP.x - 0.5) * 2,
-                -(indexFingerTIP.y - 0.5) * 2,
-                (indexFingerTIP.z) * 2 + 0.15
-            );
-            fingerCircle.position.copy(circlePosition);
-        }
+        // if (fingerCircle) {
+        //     const circlePosition = new THREE.Vector3(
+        //         (indexFingerTIP.x - 0.5) * 2,
+        //         -(indexFingerTIP.y - 0.5) * 2,
+        //         (indexFingerTIP.z) * 2 + 0.15
+        //     );
+        //     fingerCircle.position.copy(circlePosition);
+        // }
     }
 
     // Kết xuất cảnh 3D
@@ -499,8 +520,8 @@ function applyTextureToSTL(imageUrl) {
     console.log('applyTextureToSTL called with:', imageUrl.substring(0, 50) + '...');
     
     if (!stlObject) {
-        console.warn("Mô hình STL chưa được tải. Không thể áp dụng texture.");
-        alert('Mô hình STL chưa được tải. Vui lòng đợi một chút và thử lại.');
+        console.warn("Mô hình chưa được tải. Không thể áp dụng texture.");
+        alert('Mô hình chưa được tải. Vui lòng đợi một chút và thử lại.');
         return;
     }
 
@@ -521,14 +542,16 @@ function applyTextureToSTL(imageUrl) {
         texture.repeat.set(2, 2); // Lặp lại texture 2x2 để dễ nhìn thấy
         texture.flipY = false; // Quan trọng: không lật texture
         
-        // Tạo material mới - thử MeshBasicMaterial trước (không cần lighting)
-        const newMaterial = new THREE.MeshBasicMaterial({
+        // SỬ DỤNG MESH STANDARD MATERIAL ĐỂ CÓ TƯƠNG PHẢN KHI ÁP DỤNG TEXTURE
+        const newMaterial = new THREE.MeshStandardMaterial({
             map: texture,
             color: 0xffffff, // Màu trắng để texture hiển thị rõ
-            side: THREE.DoubleSide
+            side: THREE.DoubleSide,
+            metalness: 0.1, // Thêm tính chất vật lý
+            roughness: 0.8
         });
         
-        console.log('Using MeshBasicMaterial for better texture visibility');
+        console.log('Using MeshStandardMaterial for texture visibility and contrast');
         
         // Thay thế material cũ
         stlObject.material = newMaterial;
@@ -540,4 +563,61 @@ function applyTextureToSTL(imageUrl) {
         console.error('Lỗi khi tải texture:', err);
         alert('Không thể tải ảnh làm texture. Vui lòng thử lại với ảnh khác.\nLỗi: ' + err.message);
     });
+}
+
+
+
+function rotateModel(axis, angle) {
+    if (!stlObject) {
+        alert('Mô hình chưa được tải!');
+        return;
+    }
+
+    // 1. Định nghĩa Vector cho trục cục bộ
+    const axisVector = new THREE.Vector3();
+    if (axis === 'x') {
+        axisVector.set(1, 0, 0); // Trục X cục bộ (Đỏ)
+    } else if (axis === 'y') {
+        axisVector.set(0, 1, 0); // Trục Y cục bộ (Xanh lá)
+    } else if (axis === 'z') {
+        axisVector.set(0, 0, 1); // Trục Z cục bộ (Xanh dương)
+    }
+    
+    // 2. Tạo Quaternion xoay gia tăng
+    // Tạo Quaternion mới từ trục và góc xoay
+    const incrementalRotation = new THREE.Quaternion().setFromAxisAngle(axisVector, angle);
+
+    // 3. Áp dụng xoay này vào rotationOffset (Sử dụng nhân để kết hợp)
+    rotationOffset.multiply(incrementalRotation);
+    
+    // 4. ÁP DỤNG rotationOffset lên stlObject để thấy kết quả ngay lập tức
+    // Lưu ý: Việc này chỉ để cập nhật hiển thị, logic tracking sẽ ghi đè
+    stlObject.quaternion.copy(rotationOffset); 
+
+    // Ghi lại góc xoay Euler mới (chỉ để tham khảo)
+    console.log(`Rotated ${axis} by ${angle}. New rotation (Euler): X=${stlObject.rotation.x.toFixed(3)}, Y=${stlObject.rotation.y.toFixed(3)}, Z=${stlObject.rotation.z.toFixed(3)}`);
+}
+
+/**
+ * Dịch chuyển (translate) mô hình theo một trục cụ thể.
+ * @param {string} axis - Trục dịch chuyển ('x', 'y', hoặc 'z').
+ * @param {number} distance - Khoảng cách dịch chuyển.
+ */
+function translateModel(axis, distance) {
+    if (!stlObject) {
+        alert('Mô hình chưa được tải!');
+        return;
+    }
+
+    // Tăng/giảm vị trí hiện tại của mô hình
+    if (axis === 'x') {
+        stlObject.position.x += distance;
+    } else if (axis === 'y') {
+        stlObject.position.y += distance;
+    } else if (axis === 'z') {
+        stlObject.position.z += distance;
+    }
+
+    // Ghi lại vị trí để kiểm tra trong console
+    console.log(`Translated ${axis} by ${distance}. New position: X=${stlObject.position.x.toFixed(3)}, Y=${stlObject.position.y.toFixed(3)}, Z=${stlObject.position.z.toFixed(3)}`);
 }
