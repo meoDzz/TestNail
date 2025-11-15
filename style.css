@@ -53,14 +53,14 @@ canvas {
     left: 50%;
     transform: translate(-50%, -50%);
     background-color: rgba(0, 0, 0, 0.7);
-    color: white;
+    color: white; /* Đảm bảo màu là trắng */
     padding: 15px 30px;
     border-radius: 8px;
     font-size: 1.2em;
-    pointer-events: none; /* Cho phép các sự kiện chuột xuyên qua nó */
-    opacity: 0; /* Mặc định ẩn */
-    transition: opacity 0.3s ease-in-out;
-    z-index: 10; /* Đảm bảo nó nằm trên canvas/video */
+    pointer-events: none; 
+    opacity: 0; /* Bắt đầu với opacity 0 */
+    transition: opacity 0.5s ease-in-out; /* <-- SỬA LẠI TỐC ĐỘ transition */
+    z-index: 10; 
 }
 
 .highlight #drop-message {
