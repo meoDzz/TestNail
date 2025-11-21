@@ -10,13 +10,14 @@ const calibrationMessageEl = document.getElementById('drop-message'); // Dùng c
 let scene, camera, renderer, stlObject;
 let currentMaterial; 
 let lastPosition = new THREE.Vector3(); 
-let smoothingFactor = 1; // <-- ĐÃ GIẢM TỪ 0.98 XUỐNG 0.2 ĐỂ PHẢN HỒI NHANH HƠN
-let fingerCircle; 
+let smoothingFactor = 1; // Giảm độ trễ cho mượt
 let currentUVMapping = 'spherical'; 
 
-// --- LOGIC CALIBRATION MỚI ---
+// --- LOGIC CALIBRATION MỚI (CHO KÍCH THƯỚC) ---
 let isCalibrating = true;
-let referenceQuaternion = new THREE.Quaternion(); // <-- THAY THẾ CHO rotationOffset
+let referenceFingerSize = 0.1; // Kích thước tham chiếu (tỷ lệ 0-1)
+const baseObjectScale = 0.01; // Kích thước gốc của vật thể GLB
+let smoothedScaleFactor = 1.0; // Biến làm mượt scale
 
 // Tạo canvas riêng cho Three.js
 const threeCanvas = document.createElement('canvas');
@@ -53,7 +54,7 @@ const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
 directionalLight2.position.set(-1, 0, 1);
 scene.add(directionalLight2);
 
-// 5. Tải file GLB (ĐÃ THÊM AXESHELPER)
+// 5. Tải file GLB (ĐÃ XÓA rotationOffset)
 function loadGLBModel(modelPath = 'HoaVan.glb') {
     if (stlObject) {
         scene.remove(stlObject);
@@ -78,19 +79,10 @@ function loadGLBModel(modelPath = 'HoaVan.glb') {
                     currentMaterial = child.material;
                 }
             });
-            stlObject.scale.set(0.01, 0.01, 0.01); 
-            
+            // ❌ ĐÃ XÓA initialEuler và rotationOffset
+            stlObject.scale.set(baseObjectScale, baseObjectScale, baseObjectScale); 
             scene.add(stlObject);
             console.log('Mô hình GLB đã được tải thành công!');
-
-            // ✅ CODE MỚI ĐỂ HIỂN THỊ TRỤC TỌA ĐỘ
-            // Tạo một bộ trục (X=Đỏ, Y=Xanh lá, Z=Xanh dương)
-            // Số 2 là "kích thước" (scale) của trục, bạn có thể tăng/giảm nếu nó quá to/nhỏ
-            const axesHelper = new THREE.AxesHelper( 2 ); 
-            // Gắn bộ trục vào vật thể (để nó xoay cùng vật thể)
-            stlObject.add( axesHelper );
-            // ✅ KẾT THÚC CODE MỚI
-
         },
         (xhr) => {
             console.log((xhr.loaded / xhr.total * 100) + '% loaded');
@@ -106,6 +98,7 @@ loadGLBModel('HoaVan.glb');
 // --- CÀI ĐẶT MEDIAPIPE HANDS ---
 const hands = new Hands({
     locateFile: (file) => {
+        // Sửa lại đường dẫn đúng
         return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
     }
 });
@@ -118,17 +111,15 @@ hands.setOptions({
 hands.onResults(onResults);
 
 // --- BẮT ĐẦU CALIBRATION VÀ WEBCAM ---
-// Hiển thị thông báo calibration
+// (Giữ nguyên logic 5 giây)
 calibrationMessageEl.textContent = 'Giữ yên bàn tay trong 5 giây để lấy mẫu...';
 calibrationMessageEl.style.opacity = 1;
-calibrationMessageEl.style.color = 'white'; // Đảm bảo màu chữ là trắng
+calibrationMessageEl.style.color = 'white';
 
-// Đặt hẹn giờ để kết thúc calibration
 setTimeout(() => {
     isCalibrating = false;
     calibrationMessageEl.textContent = 'Đã lấy mẫu! Bắt đầu theo dõi.';
-    console.log('Reference Quaternion đã được chốt:', referenceQuaternion);
-    // Ẩn thông báo sau 2 giây
+    console.log('Kích thước ngón tay tham chiếu đã được chốt:', referenceFingerSize);
     setTimeout(() => {
         calibrationMessageEl.style.opacity = 0; 
     }, 2000);
@@ -146,7 +137,7 @@ const webcam = new Camera(videoElement, {
 webcam.start();
 
 // =================================================================
-// HÀM ONRESULTS (Giữ nguyên logic cũ của bạn để gỡ rối)
+// HÀM ONRESULTS (PHIÊN BẢN SỬA XOAY VÀ THÊM SCALE)
 // =================================================================
 function onResults(results) {
     // 1. Xóa canvas 2D cũ
@@ -164,78 +155,73 @@ function onResults(results) {
         const landmarks = results.multiHandLandmarks[0];
 
         // Lấy các điểm mốc cần thiết
-        const p0 = landmarks[0];  // Cổ tay (Wrist)
-        const p5 = landmarks[5];  // Gốc ngón trỏ (Index MCP)
-        const p8 = landmarks[8];  // Đầu ngón trỏ (Index TIP)
+        const p0 = landmarks[0];  // Cổ tay
+        const p5 = landmarks[5];  // Gốc ngón trỏ
+        const p8 = landmarks[8];  // Đầu ngón trỏ
         const p9 = landmarks[9];  // Gốc ngón giữa
-        const p17 = landmarks[17]; // Gốc ngón út (Pinky MCP)
+        const p17 = landmarks[17]; // Gốc ngón út
 
-        // Chuyển đổi tọa độ MediaPipe (0-1) sang tọa độ 3D của Three.js
-        // Lật X và Y để khớp với camera
+        // Chuyển đổi tọa độ 3D
         const v0 = new THREE.Vector3(-(p0.x - 0.5) * 2, -(p0.y - 0.5) * 2, (p0.z) * 2);
         const v5 = new THREE.Vector3(-(p5.x - 0.5) * 2, -(p5.y - 0.5) * 2, (p5.z) * 2);
         const v8 = new THREE.Vector3(-(p8.x - 0.5) * 2, -(p8.y - 0.5) * 2, (p8.z) * 2);
         const v9 = new THREE.Vector3(-(p9.x - 0.5) * 2, -(p9.y - 0.5) * 2, (p9.z) * 2);
         const v17 = new THREE.Vector3(-(p17.x - 0.5) * 2, -(p17.y - 0.5) * 2, (p17.z) * 2);
 
-
         // --- CẬP NHẬT VỊ TRÍ VẬT THỂ ---
         if (stlObject) {
-            // 1. Cập nhật vị trí - dính vào đầu ngón trỏ (v8)
+            // 1. Cập nhật vị trí
             const targetPosition = v8.clone().add(new THREE.Vector3(0, 0, 0.2)); 
             stlObject.position.lerp(targetPosition, smoothingFactor);
 
-            // --- CẬP NHẬT XOAY ---
+            // --- CẬP NHẬT XOAY (LOGIC XOAY TUYỆT ĐỐI) ---
             
-            // 2. Tính toán các vector cơ sở (basis vectors)
-            
-            // Trục Y (Lên) của vật thể = Hướng của ngón tay
-            const yAxis = new THREE.Vector3().subVectors(v8, v5).normalize();
-
-            // Trục Z (Tới) của vật thể = Pháp tuyến của lòng bàn tay
+            // 2. Tính toán các vector cơ sở của BÀN TAY
+            const yAxis = new THREE.Vector3().subVectors(v8, v5).normalize(); // Hướng dọc ngón tay
             const vecA = new THREE.Vector3().subVectors(v5, v0);
             const vecB = new THREE.Vector3().subVectors(v17, v0);
-            const zAxis = new THREE.Vector3().crossVectors(vecA, vecB).normalize();
+            const zAxis = new THREE.Vector3().crossVectors(vecA, vecB).normalize(); // Hướng pháp tuyến bàn tay
 
-            // Đảm bảo trục Z luôn hướng ra khỏi lòng bàn tay (hướng về camera)
             const wristToMiddleFinger = new THREE.Vector3().subVectors(v9, v0);
             if (zAxis.dot(wristToMiddleFinger) < 0) {
-                zAxis.negate(); // Đảo ngược nếu nó đang hướng vào trong
+                zAxis.negate();
             }
+            const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize(); // Hướng ngang ngón tay
+            zAxis.crossVectors(xAxis, yAxis).normalize(); // Chuẩn hóa lại zAxis
 
-            // Trục X (Ngang) = Trục Y cross Trục Z
-            const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
-
-            // Cần chuẩn hóa lại zAxis sau khi tính xAxis để đảm bảo trực giao hoàn toàn
-            zAxis.crossVectors(xAxis, yAxis).normalize();
-
-
-            // 3. Tạo ma trận xoay từ các vector cơ sở đã chuẩn hóa
-            // Map Trục X vật thể (chiều dài) -> yAxis (hướng dọc ngón tay)
-            // Map Trục Y vật thể (chiều cao) -> zAxis (hướng pháp tuyến)
-            // Map Trục Z vật thể (chiều sâu) -> xAxis (hướng ngang ngón tay)
-            const rotationMatrix = new THREE.Matrix4().makeBasis(yAxis, zAxis, xAxis); // <-- Đây là logic cũ của bạn
-            
+            // 3. Tạo ma trận xoay (Map X-X, Y-Y, Z-Z)
+            // ✅ SỬA LỖI XOAY NGANG: Logic này map trục X (Dài) của vật thể với trục X (Ngang) của bàn tay.
+            const rotationMatrix = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
             const currentTargetQuaternion = new THREE.Quaternion().setFromRotationMatrix(rotationMatrix);
 
-            // 4. Xử lý Calibration và Tracking
-            if (isCalibrating) {
-                // Nếu đang trong 5 giây đầu, liên tục cập nhật tư thế tham chiếu
-                referenceQuaternion.copy(currentTargetQuaternion);
-            } else {
-                // Đã qua 5 giây, bắt đầu xoay tương đối
-                const deltaRotation = new THREE.Quaternion().multiplyQuaternions(
-                    currentTargetQuaternion, 
-                    referenceQuaternion.clone().invert()
-                );
+            // 4. ÁP DỤNG XOAY TUYỆT ĐỐI (KHÔNG CẦN DELTA)
+            stlObject.quaternion.slerp(currentTargetQuaternion, smoothingFactor);
 
-                // Áp dụng góc xoay
-                stlObject.quaternion.slerp(deltaRotation, smoothingFactor);
+            // 5. ✅ LOGIC SCALE MỚI
+            // Tính kích thước ngón tay hiện tại (khoảng cách 2D giữa p5 và p8)
+            const dx = p8.x - p5.x;
+            const dy = p8.y - p5.y;
+            const currentPixelSize = Math.sqrt(dx*dx + dy*dy);
+
+            if (isCalibrating) {
+                // Trong 5s đầu, liên tục cập nhật kích thước tham chiếu
+                referenceFingerSize = currentPixelSize;
+                // Giữ nguyên scale gốc
+                stlObject.scale.set(baseObjectScale, baseObjectScale, baseObjectScale);
+            } else {
+                // Sau 5s, bắt đầu scale tương đối
+                const targetScaleFactor = currentPixelSize / referenceFingerSize;
+                
+                // Làm mượt sự thay đổi scale
+                smoothedScaleFactor = (smoothedScaleFactor * 0.9) + (targetScaleFactor * 0.1);
+                
+                const finalScale = baseObjectScale * smoothedScaleFactor;
+                stlObject.scale.set(finalScale, finalScale, finalScale);
             }
         }
     }
 
-    // 5. Kết xuất cảnh 3D
+    // 6. Kết xuất cảnh 3D
     renderer.render(scene, camera);
 }
 
@@ -287,18 +273,16 @@ function handleFiles(files) {
     }
 }
 
-// Áp dụng texture cho mô hình STL
+// Áp dụng texture cho mô hình
 function applyTextureToSTL(imageDataUrl) {
     const textureLoader = new THREE.TextureLoader();
     textureLoader.load(imageDataUrl, (texture) => {
-        // Cần lặp lại texture nếu UV mapping yêu cầu
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
 
         if (stlObject) {
             stlObject.traverse((child) => {
                 if (child.isMesh) {
-                    // Tạo vật liệu mới với texture
                     child.material = new THREE.MeshStandardMaterial({ 
                         map: texture,
                         side: THREE.DoubleSide,
@@ -306,7 +290,6 @@ function applyTextureToSTL(imageDataUrl) {
                         roughness: 0.9
                     });
                     currentMaterial = child.material;
-                    // Cập nhật UV mapping ngay lập tức
                     updateUVs(child.geometry, currentUVMapping);
                 }
             });
@@ -356,43 +339,47 @@ function changeUVMapping() {
 
 // Cập nhật UVs
 function updateUVs(geometry, type) {
-    geometry.computeBoundingBox();
-    const bbox = geometry.boundingBox;
-    const position = geometry.attributes.position;
-    const uvArray = new Float32Array(position.count * 2);
+    // GLB/gltf thường đã có UV.
+    if (!geometry.attributes.uv) {
+        geometry.computeBoundingBox();
+        const bbox = geometry.boundingBox;
+        const position = geometry.attributes.position;
+        const uvArray = new Float32Array(position.count * 2);
 
-    for (let i = 0; i < position.count; i++) {
-        const x = position.getX(i);
-        const y = position.getY(i);
-        const z = position.getZ(i);
-        
-        // Chuẩn hóa tọa độ về (0, 1)
-        const u = (x - bbox.min.x) / (bbox.max.x - bbox.min.x);
-        const v = (y - bbox.min.y) / (bbox.max.y - bbox.min.y);
-        const w = (z - bbox.min.z) / (bbox.max.z - bbox.min.z);
+        for (let i = 0; i < position.count; i++) {
+            const x = position.getX(i);
+            const y = position.getY(i);
+            const z = position.getZ(i);
+            
+            const u = (x - bbox.min.x) / (bbox.max.x - bbox.min.x);
+            const v = (y - bbox.min.y) / (bbox.max.y - bbox.min.y);
 
-        if (type === 'planar') {
-            // Chiếu phẳng lên mặt XY
-            uvArray[i * 2] = u;
-            uvArray[i * 2 + 1] = v;
-        } else if (type === 'spherical') {
-            // Chiếu hình cầu
-            const r = Math.sqrt(x*x + y*y + z*z);
-            const phi = Math.atan2(y, x);
-            const theta = Math.acos(z / r);
-            
-            uvArray[i * 2] = phi / (2 * Math.PI) + 0.5;
-            uvArray[i * 2 + 1] = theta / Math.PI;
-        } else if (type === 'cylindrical') {
-            // Chiếu hình trụ (quanh trục Y)
-            const phi = Math.atan2(z, x);
-            
-            uvArray[i * 2] = (phi / (2 * Math.PI)) + 0.5;
-            uvArray[i * 2 + 1] = v; // v (chiều cao)
+            if (type === 'planar') {
+                uvArray[i * 2] = u;
+                uvArray[i * 2 + 1] = v;
+            } else if (type === 'spherical') {
+                const r = Math.sqrt(x*x + y*y + z*z);
+                const phi = Math.atan2(y, x);
+                const theta = Math.acos(z / r);
+                uvArray[i * 2] = phi / (2 * Math.PI) + 0.5;
+                uvArray[i * 2 + 1] = theta / Math.PI;
+            } else if (type === 'cylindrical') {
+                const phi = Math.atan2(z, x);
+                uvArray[i * 2] = (phi / (2 * Math.PI)) + 0.5;
+                uvArray[i * 2 + 1] = v;
+            }
         }
+        geometry.setAttribute('uv', new THREE.BufferAttribute(uvArray, 2));
+    } else {
+        console.log("Mô hình GLB đã có UVs.");
     }
-    geometry.setAttribute('uv', new THREE.BufferAttribute(uvArray, 2));
-    geometry.attributes.uv.needsUpdate = true;
+    
+    if (currentMaterial && currentMaterial.map) {
+        currentMaterial.map.needsUpdate = true;
+    }
+    if (geometry.attributes.uv) {
+        geometry.attributes.uv.needsUpdate = true;
+    }
 }
 
 // Reset Texture
@@ -400,7 +387,6 @@ function resetTexture() {
     if (stlObject) {
         stlObject.traverse((child) => {
             if (child.isMesh) {
-                // Trả về vật liệu màu xám ban đầu
                 child.material = new THREE.MeshStandardMaterial({ 
                     color: 0xcccccc, 
                     side: THREE.DoubleSide,
@@ -412,3 +398,4 @@ function resetTexture() {
         });
     }
 }
+
