@@ -29,6 +29,14 @@ h1 {
     height: 100%;
 }
 
+.input_video {
+    z-index: 0;
+}
+
+.output_canvas {
+    z-index: 1;
+}
+
 /* Canvas 3D sẽ được tạo động bởi JavaScript */
 canvas {
     position: absolute;
@@ -38,11 +46,7 @@ canvas {
     height: 100%;
 }
 
-/* Lật video để tạo hiệu ứng "gương" */
-.input_video {
-    transform: scaleX(-1);
-}
-
+/* Drop area */
 #drop-area {
     position: relative; /* Đảm bảo con bên trong định vị tương đối với nó */
 }
@@ -52,21 +56,21 @@ canvas {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background-color: rgba(0, 0, 0, 0.7);
-    color: white; /* Đảm bảo màu là trắng */
-    padding: 15px 30px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 10px 20px;
     border-radius: 8px;
     font-size: 1.2em;
     pointer-events: none; 
-    opacity: 0; /* Bắt đầu với opacity 0 */
-    transition: opacity 0.5s ease-in-out; /* <-- SỬA LẠI TỐC ĐỘ transition */
-    z-index: 10; 
+    opacity: 0;
+    transition: opacity 0.5s ease-in-out;
+    z-index: 10;
 }
 
 .highlight #drop-message {
-    opacity: 1; /* Hiển thị khi kéo file vào */
+    opacity: 1;
 }
 
 .highlight {
-    border: 2px dashed #007bff; /* Thay đổi viền khi kéo file vào */
+    border: 2px dashed #007bff;
 }

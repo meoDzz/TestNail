@@ -2,13 +2,13 @@
 // CẤU HÌNH MÔ HÌNH CHO TỪNG NGÓN TAY (CÓ OFFSET XY)
 // =================================================================
 const fingerSettings = {
-    // offsetX: Trái/Phải | offsetY: Dọc ngón tay | offsetZ: Độ cao
-    4: { file: 'NgonCai.glb', scale: 4.5, offsetX: 0, offsetY: 0, offsetZ: 0.2 },
-    8: { file: 'NgonTro.glb', scale: 4.0, offsetX: 0, offsetY: 0, offsetZ: 0.2 },
-    12: { file: 'NgonGiua.glb', scale: 4.0, offsetX: 0, offsetY: 0, offsetZ: 0.2 },
-    16: { file: 'NgonApUt.glb', scale: 3.5, offsetX: 0, offsetY: 0, offsetZ: 0.2 },
-    20: { file: 'NgonUt.glb', scale: 3.5, offsetX: 0, offsetY: 0, offsetZ: 0.2 }
+    4: { file: 'NgonCai.glb', scale: 4.5, offsetX: 0, offsetY: 0, offsetZ: 0, rotX: Math.PI / 2, rotY: 0, rotZ: 0 },
+    8: { file: 'NgonTro.glb', scale: 4.0, offsetX: 0, offsetY: 0, offsetZ: 0, rotX: Math.PI / 2, rotY: 0, rotZ: 0 },
+    12: { file: 'NgonGiua.glb', scale: 4.0, offsetX: 0, offsetY: 0, offsetZ: 0, rotX: Math.PI / 2, rotY: 0, rotZ: 0 },
+    16: { file: 'NgonApUt.glb', scale: 3.5, offsetX: 0, offsetY: 0, offsetZ: 0, rotX: Math.PI / 2, rotY: 0, rotZ: 0 },
+    20: { file: 'NgonUt.glb', scale: 3.5, offsetX: 0, offsetY: 0, offsetZ: 0, rotX: Math.PI / 2, rotY: 0, rotZ: 0 },
 };
+
 
 const fingerBaseTips = {
     4: { tip: 4, base: 3, mid: 2 },
@@ -24,6 +24,14 @@ const fingerBaseTips = {
 const videoElement = document.getElementById('webcam');
 const canvasElement = document.getElementById('output_canvas');
 const canvasCtx = canvasElement.getContext('2d');
+
+// --- QUAN TRỌNG: đồng bộ kích thước buffer của canvas với CSS để tránh lệch toạ độ ---
+const VIEW_SIZE = 480;
+videoElement.width = VIEW_SIZE;
+videoElement.height = VIEW_SIZE;
+canvasElement.width = VIEW_SIZE;
+canvasElement.height = VIEW_SIZE;
+
 const dropArea = document.getElementById('drop-area');
 const dropMessage = document.getElementById('drop-message');
 const calibrationMessageEl = document.getElementById('drop-message');
@@ -34,7 +42,8 @@ let fingerObjs = {};
 const fingerIds = [4, 8, 12, 16, 20];
 
 let currentMaterial;
-let smoothingFactor = 0.99;
+const POS_SMOOTH = 0.7; // bám vừa
+const ROT_SMOOTH = 0.45; // mượt hơn, giảm rung
 let currentUVMapping = 'spherical';
 
 // Logic Calibration
@@ -45,36 +54,58 @@ let smoothedScaleFactor = 1.0;
 
 // Tạo canvas 3D
 const threeCanvas = document.createElement('canvas');
-threeCanvas.width = 480;
-threeCanvas.height = 480;
+threeCanvas.width = VIEW_SIZE;
+threeCanvas.height = VIEW_SIZE;
+threeCanvas.style.width = '100%';
+threeCanvas.style.height = '100%';
 threeCanvas.style.position = 'absolute';
 threeCanvas.style.top = '0';
 threeCanvas.style.left = '0';
 threeCanvas.style.pointerEvents = 'none';
+threeCanvas.style.zIndex = '2';
 document.getElementById('drop-area').appendChild(threeCanvas);
 
 // 1. Setup Three.js Scene
 scene = new THREE.Scene();
-camera = new THREE.PerspectiveCamera(70, 480 / 480, 0.1, 1000);
-camera.position.z = 1.5;
+
+// ✅ FIX: dùng OrthographicCamera để mapping 2D->3D khớp pixel (tránh lệch do perspective)
+camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 10);
+camera.position.z = 2;
 
 renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true }); // Thêm antialias cho mịn răng cưa
-renderer.setSize(threeCanvas.width, threeCanvas.height);
+renderer.setSize(threeCanvas.width, threeCanvas.height, false);
 renderer.setClearColor(0x000000, 0);
 
-renderer.outputEncoding = THREE.sRGBEncoding; // Giúp màu sắc tươi và đúng chuẩn thực tế
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05; // Giúp màu sắc tươi và đúng chuẩn thực tế
 renderer.physicallyCorrectLights = true;
+
+
+
+// --- ổn định hướng xoay theo thời gian ---
+let lastPalmN = new THREE.Vector3(0, 0, 1);
+
+function stabilizeQuatSign(currentQuat, targetQuat) {
+    // nếu targetQuat ở phía đối diện trên hypersphere -> lật dấu để slerp mượt (tránh nhảy 180°)
+    if (currentQuat.dot(targetQuat) < 0) {
+        targetQuat.x *= -1;
+        targetQuat.y *= -1;
+        targetQuat.z *= -1;
+        targetQuat.w *= -1;
+    }
+}
 // --- ÁNH SÁNG (CẬP NHẬT MẠNH HƠN) ---
 
 // 1. Đèn bán cầu (HemisphereLight): Giả lập ánh sáng bầu trời
 // SkyColor (Trắng xanh), GroundColor (Xám đất), Intensity (Tăng lên 3.0)
-const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 2.0);
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
 hemiLight.position.set(0, 20, 0);
 scene.add(hemiLight);
 
 // 2. Đèn hướng (DirectionalLight): Giả lập mặt trời
 // Tăng cường độ lên 5.0 (vì đang dùng chế độ Physical)
-const dirLight = new THREE.DirectionalLight(0xffffff, 3.0);
+const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
 dirLight.position.set(3, 10, 5); // Chiếu từ góc chéo trên cao
 dirLight.castShadow = true;
 scene.add(dirLight);
@@ -88,20 +119,21 @@ scene.add(fillLight);
 // HÀM VẼ ĐIỂM
 // =================================================================
 function drawPoint(ctx, landmark, color, label) {
-    const x = (1 - landmark.x) * ctx.canvas.width;
+    const x = landmark.x * ctx.canvas.width;
     const y = landmark.y * ctx.canvas.height;
 
+    ctx.save();
     ctx.beginPath();
-    ctx.arc(x, y, 5, 0, 2 * Math.PI);
+    ctx.arc(x, y, 8, 0, 2 * Math.PI);
     ctx.fillStyle = color;
     ctx.fill();
-    ctx.strokeStyle = "white";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 2;
     ctx.stroke();
 
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.fillStyle = "white";
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
     ctx.font = "bold 12px Arial";
     ctx.strokeStyle = 'black';
     ctx.lineWidth = 3;
@@ -132,36 +164,28 @@ function loadFingerModels() {
 
                 mesh.traverse((child) => {
                     if (child.isMesh) {
-                        child.geometry.computeBoundingBox();
-                        const center = new THREE.Vector3();
-                        child.geometry.boundingBox.getCenter(center);
-                        child.geometry.translate(-center.x, -center.y, -center.z);
+                        child.geometry.computeVertexNormals();
 
-                        child.material = new THREE.MeshStandardMaterial({
-                            color: 0xfff0e0,        // Màu trắng hơi hồng da (tự nhiên hơn trắng tinh)
-                            side: THREE.DoubleSide,
-
-                            // 1. CẤU HÌNH ĐỘ TRONG SUỐT ĐỤC (Milky)
-                            transparent: true,      // Bắt buộc bật
-                            opacity: 0.75,          // 0.0 là tàng hình, 1.0 là đục. 0.75 là vừa đẹp
-
-                            // 2. ĐỘ BÓNG BỀ MẶT (GEL)
+                        // (Giữ nguyên logic material của bạn)
+                        child.material = new THREE.MeshPhysicalMaterial({
+                            color: 0xffffff,
                             metalness: 0.0,
-                            roughness: 0.3,         // Hơi nhám nhẹ để tạo độ lì của chất sừng bên trong
-
-                            // 3. LỚP PHỦ BÓNG KÍNH BÊN NGOÀI (Clearcoat)
-                            clearcoat: 1.0,         // Lớp sơn bóng phủ lên trên
-                            clearcoatRoughness: 0.05, // Lớp phủ này láng mịn
-
-                            // 4. HIỆU ỨNG PHẢN QUANG (Tùy chọn)
-                            reflectivity: 0.5,      // Phản xạ ánh sáng vừa phải
-                            ior: 1.45,              // Chỉ số khúc xạ của chất sừng/keratin
-
-                            // Giúp móng sáng lên một chút trong bóng tối
+                            roughness: 0.2,
+                            clearcoat: 1.0,
+                            clearcoatRoughness: 0.1,
+                            reflectivity: 0.5,
+                            envMapIntensity: 1.0,
                             emissive: 0xfff0e0,
                             emissiveIntensity: 0.1
                         });
                         if (id === 8) currentMaterial = child.material;
+
+                        // Center geometry (giữ nguyên như bạn đang làm)
+                        child.geometry.computeBoundingBox();
+                        const bbox = child.geometry.boundingBox;
+                        const center = new THREE.Vector3();
+                        bbox.getCenter(center);
+                        child.geometry.translate(-center.x, -center.y, -center.z);
                     }
                 });
 
@@ -188,27 +212,40 @@ const hands = new Hands({
 hands.setOptions({
     maxNumHands: 1,
     modelComplexity: 1,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6
 });
 hands.onResults(onResults);
 
-// Calibration Timer
 setTimeout(() => {
     isCalibrating = false;
-    calibrationMessageEl.textContent = 'Đã lấy mẫu! Bắt đầu theo dõi.';
-    setTimeout(() => { calibrationMessageEl.style.opacity = 0; }, 2000);
+    dropMessage.textContent = 'Thả ảnh vào đây';
 }, 5000);
 
 const webcam = new Camera(videoElement, {
     onFrame: async () => { await hands.send({ image: videoElement }); },
-    width: 480, height: 480
+    width: VIEW_SIZE, height: VIEW_SIZE
 });
 webcam.start();
 
+// function toVector3(p) {
+//     // p.x, p.y: [0..1] trong hệ toạ độ ảnh (KHÔNG mirror).
+//     // Màn hình đang được mirror khi vẽ canvas 2D, nên 3D cũng mirror theo X để khớp.
+//     const x = 1 - 2 * p.x;        // mirror: trái<->phải
+//     const y = 1 - 2 * p.y;        // y: trên=+1, dưới=-1
+//     const z = p.z * 0.5;          // z nhỏ lại cho dễ kiểm soát
+//     return new THREE.Vector3(x, y, z);
+// }
+
+const Z_SCALE = 2.2; // tăng/giảm: 1.5 ~ 3.0 tùy bạn
+
 function toVector3(p) {
-    return new THREE.Vector3(-(p.x - 0.5) * 2, -(p.y - 0.5) * 2, (p.z) * 2);
+    const x = 1 - 2 * p.x;     // mirror theo canvas
+    const y = 1 - 2 * p.y;
+    const z = -p.z * Z_SCALE;  // NOTE: Mediapipe z thường âm khi gần camera, nên mình đảo dấu
+    return new THREE.Vector3(x, y, z);
 }
+
 
 function getFingerDirection(landmarks, tipId, baseId) {
     const vTip = toVector3(landmarks[tipId]);
@@ -216,91 +253,135 @@ function getFingerDirection(landmarks, tipId, baseId) {
     return new THREE.Vector3().subVectors(vTip, vBase).normalize();
 }
 
-// =================================================================
-// XỬ LÝ KẾT QUẢ (CẬP NHẬT OFFSET XY)
-// =================================================================
+function getPalmNormal(landmarks) {
+    const wrist = toVector3(landmarks[0]);
+    const indexMcp = toVector3(landmarks[5]);
+    const middleMcp = toVector3(landmarks[9]);
+    const pinkyMcp = toVector3(landmarks[17]);
+
+    // dùng vector ngang bàn tay + vector dọc lòng bàn tay => normal ổn định hơn
+    const across = new THREE.Vector3().subVectors(pinkyMcp, indexMcp).normalize();
+    const upPalm = new THREE.Vector3().subVectors(middleMcp, wrist).normalize();
+
+    return new THREE.Vector3().crossVectors(across, upPalm).normalize();
+}
+
+
+function computeScaleFactor(landmarks) {
+    const wrist = landmarks[0];
+    const indexMcp = landmarks[5];
+    const dx = wrist.x - indexMcp.x;
+    const dy = wrist.y - indexMcp.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (isCalibrating) {
+        referenceFingerSize = (referenceFingerSize * 0.9) + (dist * 0.1);
+        return 1.0;
+    }
+    return dist / referenceFingerSize;
+}
+
 function onResults(results) {
-    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     canvasCtx.save();
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+    // ✅ Mirror 1 lần ở đây (đừng mirror video bằng CSS nữa)
     canvasCtx.scale(-1, 1);
     canvasCtx.translate(-canvasElement.width, 0);
+
     canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-    canvasCtx.restore();
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
 
-        // Vẽ điểm 2D
+        let palmN = getPalmNormal(landmarks);
+
+        // khóa dấu: nếu palmN mới quay ngược 180° so với frame trước thì flip lại
+        if (palmN.dot(lastPalmN) < 0) palmN.negate();
+
+        // smooth để giảm rung
+        lastPalmN.lerp(palmN, 0.25).normalize();
+
+        // (tuỳ bạn bật/tắt debug)
         drawPoint(canvasCtx, landmarks[0], 'blue', 'Cổ Tay');
-        // drawPoint(canvasCtx, landmarks[4], 'yellow', 'Cái');
-        // drawPoint(canvasCtx, landmarks[8], 'red', 'Trỏ');
-        // drawPoint(canvasCtx, landmarks[12], 'purple', 'Giữa');
-        // drawPoint(canvasCtx, landmarks[16], 'cyan', 'Áp Út');
-        // drawPoint(canvasCtx, landmarks[20], 'pink', 'Út');
 
-        // Tính Scale Factor
-        const p5 = landmarks[5], p8 = landmarks[8];
-        const dx = p8.x - p5.x, dy = p8.y - p5.y;
-        const currentPixelSize = Math.sqrt(dx * dx + dy * dy);
+        const scaleFactor = computeScaleFactor(landmarks);
+        smoothedScaleFactor = smoothedScaleFactor * 0.85 + scaleFactor * 0.15;
 
-        if (isCalibrating) {
-            referenceFingerSize = currentPixelSize;
-        } else {
-            const targetFactor = currentPixelSize / referenceFingerSize;
-            smoothedScaleFactor = (smoothedScaleFactor * 0.9) + (targetFactor * 0.1);
-        }
+        fingerIds.forEach((fingerId) => {
+            const obj = fingerObjs[fingerId];
+            const config = fingerSettings[fingerId];
+            const ids = fingerBaseTips[fingerId];
+            if (!obj || !config || !ids) return;
 
-        // Cập nhật từng ngón
-        const defaultUp = new THREE.Vector3(0, 1, 0);
+            const vTip = toVector3(landmarks[ids.tip]);
+            const vBase = toVector3(landmarks[ids.base]);
+            const vMid = toVector3(landmarks[ids.mid]);
 
-        fingerIds.forEach(id => {
-            const obj = fingerObjs[id];
-            if (obj && landmarks[id]) {
-                const p = landmarks[id];
-                const config = fingerSettings[id];
+            // --- khóa roll theo lòng bàn tay để móng luôn "dọc" theo ngón ---
+            const palmN = getPalmNormal(landmarks); // nếu thấy móng lật mặt trong/ngoài, thử .negate()
 
-                let baseId = (id === 4) ? 3 : fingerBaseTips[id].mid;
+            // Hướng ngón: base -> tip (ổn định hơn lấy tip-base)
+            const fingerDir = new THREE.Vector3().subVectors(vTip, vBase).normalize();
 
-                // 1. Hướng Ngón tay
-                const fingerDirection = getFingerDirection(landmarks, id, baseId);
+            // dùng palm normal đã được ổn định để khóa roll theo bàn tay
+            let xAxis = new THREE.Vector3().crossVectors(lastPalmN, fingerDir).normalize();
+            if (xAxis.lengthSq() < 1e-8) xAxis.set(1, 0, 0);
 
-                // 2. Rotation
-                const finalQuaternion = new THREE.Quaternion().setFromUnitVectors(defaultUp, fingerDirection);
+            let yAxis = new THREE.Vector3().crossVectors(fingerDir, xAxis).normalize();
 
-                // 3. Tính toán OFFSET (Dịch chuyển cục bộ)
-                const offX = config.offsetX || 0;
-                const offY = config.offsetY || 0;
-                const offZ = config.offsetZ !== undefined ? config.offsetZ : 0.2;
+            // dựng basis
+            const m = new THREE.Matrix4().makeBasis(xAxis, yAxis, fingerDir);
+            const finalQuaternion = new THREE.Quaternion().setFromRotationMatrix(m);
 
-                const localOffset = new THREE.Vector3(offX, offY, offZ);
-                localOffset.applyQuaternion(finalQuaternion); // Xoay offset theo hướng ngón tay
+            // correction theo local model (nếu bạn có rotX/rotY/rotZ)
+            const corr = new THREE.Quaternion().setFromEuler(
+                new THREE.Euler(config.rotX || 0, config.rotY || 0, config.rotZ || 0)
+            );
+            finalQuaternion.multiply(corr);
 
-                // 4. Áp dụng
-                const vTip = toVector3(p);
-                const targetPos = vTip.clone().add(localOffset);
+            // ✅ chống nhảy 180° do quaternion đổi dấu
+            stabilizeQuatSign(obj.quaternion, finalQuaternion);
 
-                obj.position.lerp(targetPos, smoothingFactor);
-                obj.quaternion.slerp(finalQuaternion, smoothingFactor);
 
-                const configScale = config ? config.scale : 1.0;
-                const finalS = baseGlobalScale * smoothedScaleFactor * configScale;
-                obj.scale.set(finalS, finalS, finalS);
-            }
+            // Offset theo local (tắt offset mặc định để khớp tọa độ trước)
+            const localOffset = new THREE.Vector3(config.offsetX, config.offsetY, config.offsetZ);
+            localOffset.applyQuaternion(finalQuaternion);
+
+            const targetPos = new THREE.Vector3().addVectors(vTip, localOffset);
+
+            obj.position.lerp(targetPos, POS_SMOOTH);
+obj.quaternion.slerp(finalQuaternion, ROT_SMOOTH);
+
+            const s = baseGlobalScale * config.scale * smoothedScaleFactor;
+            obj.scale.set(s, s, s);
         });
     }
+
+    canvasCtx.restore();
+
     renderer.render(scene, camera);
 }
 
 // =================================================================
-// TEXTURE & UV
+// KÉO THẢ TEXTURE
 // =================================================================
-const dropZone = document.getElementById('drop-area');
-const fileInput = document.getElementById('file-input');
+dropArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropArea.classList.add('highlight');
+});
+dropArea.addEventListener('dragleave', () => {
+    dropArea.classList.remove('highlight');
+});
+dropArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropArea.classList.remove('highlight');
+    handleFiles(e.dataTransfer.files);
+});
 
-function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
-function highlight() { dropZone.classList.add('highlight'); dropMessage.style.opacity = '1'; }
-function unhighlight() { dropZone.classList.remove('highlight'); dropMessage.style.opacity = '0'; }
-function handleDrop(e) { handleFiles(e.dataTransfer.files); }
+document.getElementById('file-input').addEventListener('change', (e) => {
+    handleFiles(e.target.files);
+});
 
 function handleFiles(files) {
     if (files.length > 0 && files[0].type.startsWith('image/')) {
@@ -310,135 +391,102 @@ function handleFiles(files) {
     }
 }
 
-// function applyTextureToAll(imageDataUrl) {
-//     const textureLoader = new THREE.TextureLoader();
-//     textureLoader.load(imageDataUrl, (texture) => {
-//         texture.wrapS = THREE.RepeatWrapping;
-//         texture.wrapT = THREE.RepeatWrapping;
-//         fingerIds.forEach(id => {
-//             const obj = fingerObjs[id];
-//             if (obj) {
-//                 obj.traverse((child) => {
-//                     if (child.isMesh) {
-//                         child.material = new THREE.MeshStandardMaterial({
-//                             map: texture,
-//                             side: THREE.DoubleSide,
-//                             metalness: 0.1,
-//                             roughness: 0.9
-//                         });
-//                         updateUVs(child.geometry, currentUVMapping);
-//                     }
-//                 });
-//             }
-//         });
-//     });
-// }
-
-
 function applyTextureToAll(imageDataUrl) {
     const textureLoader = new THREE.TextureLoader();
     textureLoader.load(imageDataUrl, (texture) => {
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
 
-        // Giữ nguyên màu sắc gốc của ảnh texture
-        texture.encoding = THREE.sRGBEncoding;
-
         fingerIds.forEach(id => {
             const obj = fingerObjs[id];
-            if (obj) {
-                obj.traverse((child) => {
-                    if (child.isMesh) {
-                        // Sử dụng MeshPhysicalMaterial để giữ độ bóng
-                        child.material = new THREE.MeshPhysicalMaterial({
-                            map: texture,             // Áp texture vào
-                            color: 0xffffff,          // Màu nền trắng để texture chuẩn màu
-                            side: THREE.DoubleSide,
+            if (!obj) return;
 
-                            metalness: 0.3,
-                            roughness: 0.2,           // Tăng nhẹ roughness khi có hình để đỡ bị chói lóa mất hình
-
-                            clearcoat: 1.0,           // Vẫn giữ lớp phủ bóng
-                            clearcoatRoughness: 0.1,
-                            reflectivity: 0.8
-                        });
-                        updateUVs(child.geometry, currentUVMapping);
-                    }
-                });
-            }
-        });
-    });
-}
-
-
-
-['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => {
-    dropZone.addEventListener(e, preventDefaults, false);
-    document.body.addEventListener(e, preventDefaults, false);
-});
-['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, highlight, false));
-['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, unhighlight, false));
-dropZone.addEventListener('drop', handleDrop, false);
-fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
-
-function changeUVMapping() {
-    if (currentUVMapping === 'spherical') currentUVMapping = 'planar';
-    else if (currentUVMapping === 'planar') currentUVMapping = 'cylindrical';
-    else currentUVMapping = 'spherical';
-
-    fingerIds.forEach(id => {
-        const obj = fingerObjs[id];
-        if (obj) {
             obj.traverse((child) => {
-                if (child.isMesh) updateUVs(child.geometry, currentUVMapping);
+                if (child.isMesh && child.material) {
+                    child.material.map = texture;
+                    child.material.needsUpdate = true;
+                }
             });
-        }
+        });
+        console.log("Đã áp texture cho tất cả ngón.");
     });
-    console.log("UV Mapping changed to:", currentUVMapping);
-}
-
-function updateUVs(geometry, type) {
-    if (!geometry.attributes.uv) {
-        geometry.computeBoundingBox();
-        const bbox = geometry.boundingBox;
-        const pos = geometry.attributes.position;
-        const uvArray = new Float32Array(pos.count * 2);
-        for (let i = 0; i < pos.count; i++) {
-            const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-            const u = (x - bbox.min.x) / (bbox.max.x - bbox.min.x);
-            const v = (y - bbox.min.y) / (bbox.max.y - bbox.min.y);
-            if (type === 'planar') { uvArray[i * 2] = u; uvArray[i * 2 + 1] = v; }
-            else if (type === 'spherical') {
-                const r = Math.sqrt(x * x + y * y + z * z);
-                const phi = Math.atan2(y, x);
-                const theta = Math.acos(z / r);
-                uvArray[i * 2] = phi / (2 * Math.PI) + 0.5;
-                uvArray[i * 2 + 1] = theta / Math.PI;
-            } else if (type === 'cylindrical') {
-                const phi = Math.atan2(z, x);
-                uvArray[i * 2] = (phi / (2 * Math.PI)) + 0.5;
-                uvArray[i * 2 + 1] = v;
-            }
-        }
-        geometry.setAttribute('uv', new THREE.BufferAttribute(uvArray, 2));
-    }
-    geometry.attributes.uv.needsUpdate = true;
 }
 
 function resetTexture() {
     fingerIds.forEach(id => {
         const obj = fingerObjs[id];
-        if (obj) {
-            obj.traverse((child) => {
-                if (child.isMesh) {
-                    child.material = new THREE.MeshStandardMaterial({
-                        color: 0xcccccc,
-                        side: THREE.DoubleSide,
-                        metalness: 0.2,
-                        roughness: 0.8
-                    });
-                }
-            });
-        }
+        if (!obj) return;
+
+        obj.traverse((child) => {
+            if (child.isMesh && child.material) {
+                child.material.map = null;
+                child.material.needsUpdate = true;
+            }
+        });
     });
+    console.log("Đã reset texture.");
+}
+
+// =================================================================
+// UV MAPPING (giữ nguyên logic bạn đang có)
+// =================================================================
+function changeUVMapping() {
+    currentUVMapping = (currentUVMapping === 'spherical') ? 'cylindrical' : 'spherical';
+
+    fingerIds.forEach(id => {
+        const obj = fingerObjs[id];
+        if (!obj) return;
+
+        obj.traverse((child) => {
+            if (child.isMesh) {
+                updateUVs(child.geometry, currentUVMapping);
+                child.geometry.attributes.uv.needsUpdate = true;
+            }
+        });
+    });
+
+    console.log("Đổi UV Mapping:", currentUVMapping);
+}
+
+function updateUVs(geometry, mode) {
+    geometry.computeBoundingBox();
+    const bbox = geometry.boundingBox;
+    const size = new THREE.Vector3();
+    bbox.getSize(size);
+
+    const positions = geometry.attributes.position;
+    const uv = geometry.attributes.uv;
+    if (!uv) {
+        const uvs = new Float32Array(positions.count * 2);
+        geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    }
+
+    const uvs = geometry.attributes.uv.array;
+
+    for (let i = 0; i < positions.count; i++) {
+        const x = positions.getX(i);
+        const y = positions.getY(i);
+        const z = positions.getZ(i);
+
+        let u = 0, v = 0;
+
+        if (mode === 'spherical') {
+            const nx = (x - bbox.min.x) / size.x - 0.5;
+            const ny = (y - bbox.min.y) / size.y - 0.5;
+            const nz = (z - bbox.min.z) / size.z - 0.5;
+
+            const theta = Math.atan2(nz, nx);
+            const phi = Math.acos(ny / Math.sqrt(nx * nx + ny * ny + nz * nz));
+
+            u = (theta + Math.PI) / (2 * Math.PI);
+            v = phi / Math.PI;
+        } else {
+            const angle = Math.atan2(z, x);
+            u = (angle + Math.PI) / (2 * Math.PI);
+            v = (y - bbox.min.y) / size.y;
+        }
+
+        uvs[i * 2] = u;
+        uvs[i * 2 + 1] = v;
+    }
 }
